@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Cosmic Raymarching - Muography Fractal Art</title>
+  <style>
+    :root {
+      --panel-bg: rgba(12, 16, 24, 0.85);
+      --accent: #00e5ff;
+      --text: #e0f2fe;
+    }
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    body, html {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background-color: #030508; color: var(--text);
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      overflow: hidden; touch-action: none;
+      display: flex; flex-direction: column;
+    }
+    
+    /* 上部の空き領域すべてを使い、中央に正方形キャンバスを配置 */
+    #viewport {
+      position: relative; width: 100%; flex: 1; min-height: 0;
+      overflow: hidden; display: flex; align-items: center; justify-content: center;
+      background-color: #020305;
+    }
+    canvas {
+      display: block;
+      box-shadow: 0 0 24px rgba(0, 229, 255, 0.15);
+      border: 1px solid rgba(0, 229, 255, 0.25);
+    }
+
+    #guide-frame { display: none; }
+
+    /* 操作ヒント */
+    #hint {
+      position: absolute; top: 12px; left: 16px; pointer-events: none;
+      font-size: 11px; color: rgba(255,255,255,0.5); line-height: 1.4;
+      text-shadow: 0 1px 3px #000;
+    }
+
+    /* コントロールパネル（キャンバスと重ならず下部に配置） */
+    #ui-panel {
+      width: 100%; flex-shrink: 0;
+      max-height: 44vh; overflow-y: auto;
+      background: var(--panel-bg);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border-top: 1px solid rgba(0, 229, 255, 0.25);
+      padding: 12px 18px 18px 18px;
+      z-index: 10;
+    }
+    #ui-panel.collapsed {
+      max-height: 40px; overflow: hidden; padding-bottom: 0;
+    }
+    .panel-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 12px; cursor: pointer; padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    .panel-title {
+      font-size: 13px; font-weight: bold; letter-spacing: 1.5px; color: var(--accent);
+    }
+    .toggle-btn {
+      font-size: 11px; color: #94a3b8; background: none; border: none; cursor: pointer;
+    }
+
+    .control-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px 20px;
+    }
+    .control-group {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .control-label {
+      display: flex; justify-content: space-between; font-size: 12px; color: #cbd5e1;
+    }
+    .val-display { color: var(--accent); font-family: monospace; }
+
+    input[type="range"] {
+      -webkit-appearance: none; width: 100%; height: 5px;
+      background: #1e293b; border-radius: 3px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      border-radius: 50%; background: var(--accent); cursor: pointer;
+      box-shadow: 0 0 8px rgba(0, 229, 255, 0.6);
+    }
+
+    /* カラーパレット・ボタン類 */
+    .palette-row {
+      display: flex; gap: 6px; align-items: center; margin-top: 4px; flex-wrap: wrap;
+    }
+    .btn {
+      background: rgba(255,255,255,0.08); color: var(--text);
+      border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;
+      padding: 6px 10px; font-size: 11px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn:hover, .btn:active {
+      background: rgba(0, 229, 255, 0.2); border-color: var(--accent);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #0284c7, #00e5ff);
+      color: #000; font-weight: bold; border: none;
+      padding: 10px 16px; font-size: 13px; width: 100%; margin-top: 8px;
+      box-shadow: 0 2px 12px rgba(0, 229, 255, 0.3);
+    }
+    #color-preview {
+      height: 18px; flex-grow: 1; border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.25); min-width: 60px;
+    }
+
+    /* チェックボックス */
+    .checkbox-row {
+      display: flex; align-items: center; gap: 8px; font-size: 12px;
+      margin-top: 4px; cursor: pointer;
+    }
+    .checkbox-row input {
+      accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer;
+    }
+
+    /* ローディング表示 */
+    #status-toast {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(0,0,0,0.85); border: 1px solid var(--accent);
+      padding: 12px 24px; border-radius: 6px; font-size: 13px;
+      color: var(--accent); pointer-events: none; opacity: 0;
+      transition: opacity 0.2s; z-index: 20; letter-spacing: 1px;
+    }
+    #status-toast.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<div id="viewport">
+  <canvas id="glcanvas"></canvas>
+  <div id="guide-frame">16:9 OUTPUT AREA</div>
+  <div id="hint">
+    1本指ドラッグ / 左ドラッグ : 3D回転 (Orbit)<br>
+    2本指ドラッグ / 右(Shift)ドラッグ : 平行移動 (Pan)<br>
+    Alt(Option)ドラッグ / ダブルタップ : 透過スコープ移動<br>
+    2本指ピンチ / ホイール : 拡大縮小 (Zoom)
+  </div>
+  <div id="status-toast">CALCULATING MUOGRAPHY...</div>
+</div>
+
+<div id="ui-panel">
+  <div class="panel-header" id="panel-toggle">
+    <span class="panel-title">COSMIC RAYMARCHING // CONTROLS</span>
+    <button class="toggle-btn" id="toggle-label">▼ 閉じる</button>
+  </div>
+
+  <div class="control-grid">
+    <!-- 1. フラクタル次数 -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>フラクタル次数 (Power)</span>
+        <span class="val-display" id="val-power">6.0</span>
+      </div>
+      <input type="range" id="slider-power" min="2.0" max="10.0" step="0.1" value="6.0">
+    </div>
+
+    <!-- 2. 透過度・密度 -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>媒質密度 / 阻止能 (Density)</span>
+        <span class="val-display" id="val-density">22.0</span>
+      </div>
+      <input type="range" id="slider-density" min="5.0" max="50.0" step="0.5" value="22.0">
+    </div>
+
+<!-- 5. 内部透過モード (旧X線スコープ) -->
+    <div class="control-group">
+      <label class="checkbox-row">
+        <input type="checkbox" id="check-xray" checked>
+        <span>内部透過モード (外皮を剥がして骨格を透視)</span>
+      </label>
+      <div class="control-label" style="margin-top:4px;">
+        <span>内部透過径 (Penetration Radius)</span>
+        <span class="val-display" id="val-scope">0.65</span>
+      </div>
+      <input type="range" id="slider-scope" min="0.1" max="1.5" step="0.05" value="0.65">
+      <div class="control-label" style="margin-top:4px;">
+        <span>透過位置 X / Y (Scope Center)</span>
+        <span class="val-display"><span id="val-scopex">0.00</span>, <span id="val-scopey">0.00</span></span>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <input type="range" id="slider-scopex" min="-1.0" max="1.0" step="0.02" value="0.00" title="透過位置 X">
+        <input type="range" id="slider-scopey" min="-1.0" max="1.0" step="0.02" value="0.00" title="透過位置 Y">
+      </div>
+    </div>
+
+    <!-- 6-1. 外部カラーパレット設定 (外皮・通常領域) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>外部パレット (Outer Shell Palette)</span>
+      </div>
+      <div class="palette-row">
+        <button class="btn" data-target="outer" data-preset="cherenkov">チェレンコフ</button>
+        <button class="btn" data-target="outer" data-preset="magma">マグマ</button>
+        <button class="btn" data-target="outer" data-preset="concrete">コンクリート</button>
+        <button class="btn" data-target="outer" data-preset="pyramid">ピラミッド</button>
+        <button class="btn" data-target="outer" data-preset="heatmap">ヒートマップ</button>
+        <button class="btn" data-target="outer" data-preset="rainbow">🌈</button>
+        <button class="btn" id="btn-random-outer">🎲</button>
+        <div id="color-preview-outer" style="height:18px; flex-grow:1; border-radius:3px; border:1px solid rgba(255,255,255,0.25); min-width:50px;"></div>
+      </div>
+    </div>
+
+    <!-- 6-2. 内部カラーパレット設定 (透過スコープ内コア) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>内部パレット (Inner Core Palette)</span>
+      </div>
+      <div class="palette-row">
+        <button class="btn" data-target="inner" data-preset="cherenkov">チェレンコフ</button>
+        <button class="btn" data-target="inner" data-preset="magma">マグマ</button>
+        <button class="btn" data-target="inner" data-preset="concrete">コンクリート</button>
+        <button class="btn" data-target="inner" data-preset="pyramid">ピラミッド</button>
+        <button class="btn" data-target="inner" data-preset="heatmap">ヒートマップ</button>
+        <button class="btn" data-target="inner" data-preset="rainbow">🌈</button>
+        <button class="btn" id="btn-random-inner">🎲</button>
+        <div id="color-preview-inner" style="height:18px; flex-grow:1; border-radius:3px; border:1px solid rgba(255,255,255,0.25); min-width:50px;"></div>
+      </div>
+    </div>
+
+  <!-- 7. 空間折り返し (Box Fold) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>空間折り返し / 結晶化 (Box Fold)</span>
+        <span class="val-display" id="val-fold">0.00</span>
+      </div>
+      <input type="range" id="slider-fold" min="0.0" max="1.0" step="0.02" value="0.00">
+    </div>
+
+    <!-- 8. ジュリア集合ブレンド (Julia Mix) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>ジュリア集合化 (Julia Mix)</span>
+        <span class="val-display" id="val-julia">0.00</span>
+      </div>
+      <input type="range" id="slider-julia" min="0.0" max="1.0" step="0.02" value="0.00">
+    </div>
+
+    <!-- 9. 内部回転・ねじれ (Internal Twist) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>内部ねじれ角 (Twist)</span>
+        <span class="val-display" id="val-twist">0.35</span>
+      </div>
+      <input type="range" id="slider-twist" min="0.0" max="3.14" step="0.05" value="0.35">
+    </div>
+
+    <!-- 10-1. 反復回数下限 (Min Iterations) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>反復回数下限 (Min Iterations)</span>
+        <span class="val-display" id="val-miniter">0</span>
+      </div>
+      <input type="range" id="slider-miniter" min="0" max="300" step="1" value="0">
+    </div>
+
+    <!-- 10. 最大反復回数 (Max Iterations) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>反復回数上限 (Max Iterations)</span>
+        <span class="val-display" id="val-iter">12</span>
+      </div>
+      <input type="range" id="slider-iter" min="2" max="1200" step="1" value="12">
+    </div>
+
+    <!-- 11. マルチカラー周期 (Rainbow Cycles) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>反復マルチカラー周期 (Rainbow)</span>
+        <span class="val-display" id="val-rainbow">0.00</span>
+      </div>
+      <input type="range" id="slider-rainbow" min="0.0" max="5.0" step="0.1" value="0.0">
+    </div>
+
+    <!-- 12. 宇宙線ミュオン飛跡 (Muon Tracks) -->
+    <div class="control-group">
+      <div class="control-label">
+        <span>ミュオン飛跡 本数 / 引き直し</span>
+        <span class="val-display" id="val-trackcount">18</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="range" id="slider-trackcount" min="0" max="64" step="1" value="18" style="flex:1;">
+        <button class="btn" id="btn-reroll-tracks" style="padding:3px 8px; white-space:nowrap;">🎲 飛跡引き直し</button>
+      </div>
+      <div class="control-label" style="margin-top:4px;">
+        <span>ミュオン飛跡 輝度 (Track Intensity)</span>
+        <span class="val-display" id="val-tracks">1.00</span>
+      </div>
+      <input type="range" id="slider-tracks" min="0.0" max="2.5" step="0.05" value="1.00">
+    </div>
+  </div>
+
+  <button class="btn btn-primary" id="btn-save">高解像度で保存 (2160 × 2160 正方形 PNG)</button>
+</div>
+
+<script type="module">
+import * as THREE from './three.module.min.js';
+
+// --- 状態管理 ---
+const state = {
+  power: 6.0,
+  density: 22.0,
+  rotX: 0.40,
+  rotY: 0.25,
+  xrayMode: 1.0,
+  scopeRadius: 0.65,
+  scopeX: 0.0,
+  scopeY: 0.0,
+  fold: 0.0,
+  julia: 0.0,
+  twist: 0.35,
+  minIter: 0.0,
+  maxIter: 12.0,
+  rainbow: 0.0,
+  muonTracks: 1.0,
+  pan: new THREE.Vector2(0.0, 0.0),
+  zoom: 1.0,
+  // 外部パレット（初期値：チェレンコフ）
+  outerStart: new THREE.Color(0x020b26),
+  outerMid:   new THREE.Color(0x0044ff),
+  outerEnd:   new THREE.Color(0xaaddff),
+  outerFullRainbow: 0.0,
+  // 内部パレット（初期値：マグマ — 内外の対比がひと目でわかる初期構成）
+  innerStart: new THREE.Color(0x220000),
+  innerMid:   new THREE.Color(0xff2200),
+  innerEnd:   new THREE.Color(0xffee55),
+  innerFullRainbow: 0.0
+};
+
+// --- Three.js 初期化 ---
+const canvas = document.getElementById('glcanvas');
+const renderer = new THREE.WebGLRenderer({
+  canvas: canvas,
+  preserveDrawingBuffer: true,
+  antialias: false,
+  powerPreference: 'high-performance'
+});
+
+const scene = new THREE.Scene();
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// --- シェーダー実装 ---
+const vertexShader = `
+  void main() {
+    gl_Position = vec4(position, 1.0);
+  }
+`;
+
+const fragmentShader = `
+  precision highp float;
+
+  uniform vec2 u_resolution;
+  uniform vec2 u_pan;
+  uniform float u_zoom;
+  uniform float u_power;
+  uniform float u_density;
+  uniform vec2 u_rot;
+  uniform float u_xrayMode;
+  uniform float u_scopeRadius;
+  uniform vec2 u_scopePos;
+  uniform float u_fold;
+  uniform float u_julia;
+  uniform float u_twist;
+  uniform float u_minIter;
+  uniform float u_maxIter;
+  uniform float u_rainbow;
+  uniform float u_muonTracks;
+  uniform float u_muonCount;
+  uniform float u_muonSeed;
+  uniform vec3 u_outerStart;
+  uniform vec3 u_outerMid;
+  uniform vec3 u_outerEnd;
+  uniform float u_outerFullRainbow;
+  uniform vec3 u_innerStart;
+  uniform vec3 u_innerMid;
+  uniform vec3 u_innerEnd;
+  uniform float u_innerFullRainbow;
+
+  mat2 rot(float a) {
+    float s = sin(a), c = cos(a);
+    return mat2(c, -s, s, c);
+  }
+
+  vec3 cosinePalette(float t, vec3 a, vec3 b, vec3 d) {
+    return a + b * cos(6.283185 * (vec3(1.0, 1.0, 1.0) * t + d));
+  }
+
+  // 現在のパレットの3色グラデーションに沿って反復周期カラーを生成する関数
+  vec3 evalPalette(float t, vec3 cStart, vec3 cMid, vec3 cEnd, float isFullRainbow) {
+    if (isFullRainbow > 0.5) {
+      return cosinePalette(t, vec3(0.52), vec3(0.48), vec3(0.0, 0.33, 0.67));
+    }
+    // 0.0 -> 1.0 -> 0.0 の三角波でパレット内の3色を滑らかに往復・循環させる
+    float w = 1.0 - abs(fract(t) * 2.0 - 1.0);
+    w = smoothstep(0.0, 1.0, w);
+    if (w < 0.5) {
+      return mix(cStart, cMid, w * 2.0);
+    } else {
+      return mix(cMid, cEnd, (w - 0.5) * 2.0);
+    }
+  }
+
+  // 戻り値: x = SDF距離, y = 骨格密度(OrbitTrap), z = 正規化反復回数
+  vec3 map(vec3 p) {
+    vec3 w = p;
+    float m = dot(w, w);
+    float dz = 1.0;
+    float trap = 1e10;
+    float iterCount = 0.0;
+
+    vec3 juliaC = vec3(-0.4, 0.25, -0.3) + 0.2 * sin(vec3(u_twist, u_power * 0.5, u_twist * 1.3));
+    vec3 c = mix(p, juliaC, u_julia);
+
+    for(int i = 0; i < 1200; i++) {
+      if(float(i) >= u_maxIter) break;
+      if(m > 4.0) break;
+
+      if(u_fold > 0.001) {
+        vec3 folded = clamp(w, -0.85, 0.85) * 2.0 - w;
+        w = mix(w, folded, u_fold);
+        dz *= (1.0 + u_fold * 0.5);
+      }
+
+      float r = length(w);
+      if(r < 0.0001) break;
+
+      dz = u_power * pow(r, u_power - 1.0) * dz + 1.0;
+
+      float b = u_power * acos(clamp(w.y / r, -1.0, 1.0));
+      float a = u_power * atan(w.x, w.z);
+
+      w = c + pow(r, u_power) * vec3(sin(b) * sin(a), cos(b), sin(b) * cos(a));
+      
+      w.xz *= rot(u_twist);
+      w.xy *= rot(u_twist * 0.4);
+
+      m = dot(w, w);
+      // 下限(u_minIter)以上の深い反復層でのみ骨格トラップを記録
+      if (float(i) >= u_minIter) {
+        trap = min(trap, abs(w.y) * 0.7 + 0.35 * length(w.xz));
+      }
+      iterCount += 1.0;
+    }
+
+    float smoothIter = iterCount - log2(max(1.0, log(max(m, 1.0001)) * 0.5));
+    float normIter = clamp((smoothIter - u_minIter) / max(1.0, u_maxIter - u_minIter), 0.0, 1.0);
+
+    float dist = 0.25 * log(max(m, 1.0001)) * sqrt(m) / dz;
+    // 反復回数が下限に満たない外側の浅い領域は骨格密度を0にする
+    float coreVal = (iterCount > u_minIter) ? clamp(1.0 - trap, 0.0, 1.0) : 0.0;
+    return vec3(dist, coreVal, normIter);
+  }
+
+  // 擬似乱数ハッシュ関数
+  vec3 hash31(float p) {
+    vec3 p3 = fract(vec3(p) * vec3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xxy + p3.yzz) * p3.zyx);
+  }
+
+  // ランダム方向から入射し、フラクタル構造体の密度に応じて減衰する宇宙線ミュオン飛跡
+  vec3 renderMuonTracks(vec3 ro, vec3 rd, float stoppingPower) {
+    if (u_muonTracks < 0.01 || u_muonCount < 0.5) return vec3(0.0);
+    vec3 trackAccum = vec3(0.0);
+
+    // 最大64本まで指定本数分のミュオン飛跡を計算（u_muonSeed で角度・位置を再抽選）
+    for (int k = 0; k < 64; k++) {
+      if (float(k) >= u_muonCount) break;
+      float fk = float(k) + u_muonSeed * 113.57;
+      vec3 h1 = hash31(fk * 19.31 + 1.7);
+      vec3 h2 = hash31(fk * 43.17 + 5.3);
+
+      // ランダムな入射方向 md と、構造体中心付近を通過するオフセット座標
+      vec3 md = normalize(h1 * 2.0 - 1.0);
+      vec3 offset = (h2 * 2.0 - 1.0) * 0.95;
+      offset -= md * dot(offset, md);
+      // 飛跡の入射開始点（構造体の外側 半径2.0 の球面上）
+      vec3 m0 = offset - md * 2.0;
+
+      // 視線レイ(ro + t*rd) と ミュオン飛跡(m0 + s*md) の2直線間の最短距離を計算
+      vec3 w0 = ro - m0;
+      float b = dot(rd, md);
+      float denom = 1.0 - b * b;
+      if (denom < 0.0001) continue;
+
+      float d_dot = dot(rd, w0);
+      float e_dot = dot(md, w0);
+      float t_ray = (b * e_dot - d_dot) / denom; // カメラからの距離
+      float s_muon = (e_dot - b * d_dot) / denom; // ミュオンの入射点からの進行距離
+
+      // 構造体周辺領域（0 < s_muon < 4.0）かつカメラ前方のみ処理
+      if (t_ray < 0.2 || s_muon < 0.0 || s_muon > 4.0) continue;
+
+      vec3 p_ray = ro + rd * t_ray;
+      vec3 p_muon = m0 + md * s_muon;
+      float lineDist = length(p_ray - p_muon);
+
+      // 視線がミュオン飛跡の近く（半径0.035以内）を通るピクセルだけ、
+      // ミュオンが入射してから現在地点(s_muon)に至るまでの物質密度を積分して減衰率を求める
+      if (lineDist < 0.035) {
+        float muonTrans = 1.0; // ミュオンの残存エネルギー（透過率）
+        const int M_STEPS = 10;
+        float ds = s_muon / float(M_STEPS);
+
+        for (int m = 0; m < M_STEPS; m++) {
+          vec3 mp = m0 + md * ((float(m) + 0.5) * ds);
+          // 原点から遠い真空領域は計算スキップ
+          if (dot(mp, mp) < 2.2) {
+            vec3 mres = map(mp);
+            float md_sdf = mres.x;
+            float m_core = mres.y;
+            // 外皮＋内部骨格の密度に応じてミュオンが減衰（阻止能が高いほど急激に減衰）
+            float rho = (exp(-abs(md_sdf) * 16.0) * 0.55 + pow(m_core, 2.5) * exp(-abs(md_sdf) * 10.0) * 1.45) * stoppingPower;
+            muonTrans *= exp(-rho * ds * 3.8);
+          }
+        }
+
+        // 減衰するにつれてレーザーの芯も細くなる表現
+        float coreProfile = exp(-lineDist * lineDist / (0.000018 * (0.3 + 0.7 * muonTrans))) * 1.3
+                          + exp(-lineDist * 140.0) * 0.35;
+        float endFade = smoothstep(0.0, 0.35, s_muon) * smoothstep(4.0, 3.3, s_muon);
+
+        // カメラから飛跡までの間に外皮がある場合は遮蔽する（透過スコープ内では透視できる）
+        vec3 camMid = ro + rd * min(t_ray * 0.65, 2.3);
+        float camOcc = smoothstep(-0.02, 0.08, map(camMid).x);
+
+        // 入射時は白〜水色の高エネルギー発光、減衰すると内部パレット色へシフトして消えていく
+        vec3 trackCol = mix(u_innerMid, mix(u_innerEnd, vec3(0.85, 0.97, 1.0), 0.75), muonTrans);
+        trackAccum += trackCol * coreProfile * muonTrans * endFade * max(camOcc, 0.25);
+      }
+    }
+    return trackAccum * u_muonTracks;
+  }
+
+  void main() {
+    vec2 screenUV = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / min(u_resolution.x, u_resolution.y);
+    vec2 uv = screenUV / u_zoom - u_pan;
+
+    vec3 ro = vec3(0.0, 0.0, 2.8);
+    vec3 rd = normalize(vec3(uv, -1.6));
+
+    // 3Dオービット回転 (縦回転Pitch → 横回転Yaw)
+    ro.yz *= rot(u_rot.y);
+    rd.yz *= rot(u_rot.y);
+    ro.xz *= rot(u_rot.x);
+    rd.xz *= rot(u_rot.x);
+
+    // --- 内部透過モード（任意の位置 u_scopePos を中心に外皮を剥がすマスク） ---
+    float distFromCenter = length(screenUV - u_scopePos);
+    // 1.0 = 透過エリアの中心（内部骨格のみ）, 0.0 = 外側（外皮あり）
+    float innerMask = (u_xrayMode > 0.5) ? (1.0 - smoothstep(u_scopeRadius * 0.55, u_scopeRadius, distFromCenter)) : 0.0;
+
+    // カメラ位置(ro = 2.8)に合わせ、構造体手前(t = 1.0)から開始
+    float t = 1.0;
+    float shellAccum = 0.0; // 外皮（ガワ）の蓄積
+    float coreAccum = 0.0;  // 内部骨格（コア）の蓄積
+    float accumIter = 0.0;
+    float weightSum = 0.0;
+    float transmittance = 1.0;
+
+    for(int i = 0; i < 90; i++) {
+      vec3 p = ro + rd * t;
+      vec3 res = map(p);
+      float d = res.x;
+      float orbitCore = res.y;
+      float iterVal = res.z;
+
+      float stepSize = max(abs(d) * 0.5, 0.012);
+
+      // 阻止能係数：高いほど物質が濃く不透明になり、ミュオンを強く減衰させる
+      float stoppingPower = u_density / 22.0;
+
+      // 【重要】abs(d)ではなく max(d, 0.0) を使うことで、内部(d < 0)が空洞にならずソリッドに詰まる
+      // さらに表面の凹凸(orbitCore)を加味して外皮の立体的な陰影を作る
+      float solidInterior = exp(-max(d, 0.0) * 24.0);
+      float shellDensity = solidInterior * (0.45 + 0.75 * orbitCore) * stoppingPower;
+
+      // 内部骨格の密度：深部（原点付近）の鋭い結晶コアだけを抽出
+      float radialDepth = clamp(1.35 - length(p) * 0.75, 0.0, 1.0);
+      float sharpSkeleton = pow(orbitCore, 2.6) * exp(-abs(d) * 10.0) * (0.4 + 1.3 * radialDepth) * stoppingPower;
+
+      // カメラ位置2.8基準：透過スコープの内側だけ、手前の外皮(t < 2.55)を剥がして内部を露出させる
+      float depthPeel = smoothstep(1.95, 2.65, t);
+      float effectiveShell = shellDensity * mix(1.0, depthPeel * 0.05, innerMask);
+
+      float wShell = effectiveShell * stepSize * 2.6 * transmittance;
+      float wCore  = sharpSkeleton  * stepSize * 4.2 * transmittance;
+
+      shellAccum += wShell;
+      coreAccum  += wCore;
+
+      float wTotal = mix(wShell, wCore, innerMask);
+      accumIter += wTotal * iterVal;
+      weightSum += wTotal;
+
+      // スコープ外では手前の外皮でしっかり減衰させて内部を隠し、スコープ内では奥のコアまで到達させる
+      float absorbRate = mix(effectiveShell * 1.35, sharpSkeleton * 0.25, innerMask);
+      transmittance *= exp(-absorbRate * stepSize * 2.5);
+
+      if(transmittance < 0.015 || t > 4.6) break;
+      t += stepSize;
+    }
+
+    // 【白飛び防止】ソフトサチュレーション関数 1.0 - exp(-x) で高エネルギー領域も階調を潰さず0.0〜1.0に収める
+    float vShell = 1.0 - exp(-shellAccum * 1.25);
+    float vCore  = 1.0 - exp(-coreAccum  * 0.95);
+    float avgIter = (weightSum > 0.0001) ? (accumIter / weightSum) : 0.0;
+
+    // --- 1. 外部パレットによる外皮（Outer Shell）の色彩計算 ---
+    float outerPhase = vShell * 0.5 + avgIter * u_rainbow;
+    vec3 outerPal = evalPalette(outerPhase, u_outerStart, u_outerMid, u_outerEnd, u_outerFullRainbow);
+    vec3 outerCol = outerPal * (0.15 + 0.95 * vShell);
+    outerCol += mix(u_outerEnd, vec3(1.0), 0.35) * pow(vShell, 3.0) * 0.35;
+
+    // --- 2. 内部パレットによる内部骨格（Inner Core）の色彩計算 ---
+    float innerPhase = vCore * 0.5 + avgIter * u_rainbow;
+    vec3 innerPal = evalPalette(innerPhase, u_innerStart, u_innerMid, u_innerEnd, u_innerFullRainbow);
+    vec3 innerCol = innerPal * (0.15 + 0.95 * vCore);
+    innerCol += mix(u_innerEnd, vec3(1.0), 0.45) * pow(vCore, 3.5) * 0.42;
+
+    // --- 3. 外部領域と内部透過スコープの合成（スコープ外に内部が透け出さないよう完全分離） ---
+    vec3 outerView = outerCol;
+    vec3 innerView = innerCol * 0.95 + outerCol * 0.10;
+    vec3 structCol = mix(outerView, innerView, innerMask);
+
+    float presence = mix(max(vShell, vCore * 0.5), max(vCore, vShell * 0.25), innerMask);
+    vec3 col = mix(vec3(0.01, 0.015, 0.025), structCol, smoothstep(0.0, 0.15, presence));
+
+    // ランダム方向から飛来し、構造体の密度に応じて減衰する宇宙線ミュオン飛跡を合成
+    vec3 tracks = renderMuonTracks(ro, rd, u_density / 22.0);
+    col += tracks;
+
+    // トーンマッピング仕上げ（全体の露出オーバー・白飛びを完全に防ぎつつ深みを出す）
+    col = col / (1.0 + col * 0.22);
+
+    col = pow(max(col, 0.0), vec3(0.88));
+    gl_FragColor = vec4(col, 1.0);
+  }
+`;
+
+const uniforms = {
+  u_resolution: { value: new THREE.Vector2() },
+  u_pan: { value: new THREE.Vector2(0, 0) },
+  u_zoom: { value: 1.0 },
+  u_power: { value: state.power },
+  u_density: { value: state.density },
+  u_rot: { value: new THREE.Vector2(state.rotX, state.rotY) },
+  u_xrayMode: { value: state.xrayMode },
+  u_scopeRadius: { value: state.scopeRadius },
+  u_scopePos: { value: new THREE.Vector2(state.scopeX, state.scopeY) },
+  u_fold: { value: state.fold },
+  u_julia: { value: state.julia },
+  u_twist: { value: state.twist },
+  u_minIter: { value: state.minIter },
+  u_maxIter: { value: state.maxIter },
+  u_rainbow: { value: state.rainbow },
+  u_muonTracks: { value: state.muonTracks },
+  u_muonCount: { value: state.muonCount },
+  u_muonSeed: { value: state.muonSeed },
+  u_outerStart: { value: state.outerStart },
+  u_outerMid: { value: state.outerMid },
+  u_outerEnd: { value: state.outerEnd },
+  u_outerFullRainbow: { value: state.outerFullRainbow },
+  u_innerStart: { value: state.innerStart },
+  u_innerMid: { value: state.innerMid },
+  u_innerEnd: { value: state.innerEnd },
+  u_innerFullRainbow: { value: state.innerFullRainbow }
+};
+
+const material = new THREE.ShaderMaterial({
+  vertexShader,
+  fragmentShader,
+  uniforms
+});
+
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+scene.add(mesh);
+
+// --- 動的解像度スケーリング ＆ GPU計算時間監視（1秒超で自動ブレーキ＆警告） ---
+const toast = document.getElementById('status-toast');
+let renderTimer = null;
+let hiResTimer = null;
+let toastTimer = null;
+
+function showWarningToast(msg, duration = 3200) {
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toast.classList.remove('visible');
+  }, duration);
+}
+
+const viewport = document.getElementById('viewport');
+
+function setCanvasResolution(scale = 1.0) {
+  // パネルを除いた空き領域(#viewport)に収まる最大の正方形サイズを算出
+  const rect = viewport.getBoundingClientRect();
+  const size = Math.max(64, Math.floor(Math.min(rect.width, rect.height) - 16));
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+
+  const baseDpr = Math.min(window.devicePixelRatio || 1, 2.0);
+  const dpr = baseDpr * scale;
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(size, size, false);
+  uniforms.u_resolution.value.set(size * dpr, size * dpr);
+}
+
+function syncUniforms() {
+  uniforms.u_pan.value.copy(state.pan);
+  uniforms.u_zoom.value = state.zoom;
+  uniforms.u_power.value = state.power;
+  uniforms.u_density.value = state.density;
+  uniforms.u_rot.value.set(state.rotX, state.rotY);
+  uniforms.u_xrayMode.value = state.xrayMode;
+  uniforms.u_scopeRadius.value = state.scopeRadius;
+  uniforms.u_scopePos.value.set(state.scopeX, state.scopeY);
+  uniforms.u_fold.value = state.fold;
+  uniforms.u_julia.value = state.julia;
+  uniforms.u_twist.value = state.twist;
+  uniforms.u_minIter.value = state.minIter;
+  uniforms.u_maxIter.value = state.maxIter;
+  uniforms.u_rainbow.value = state.rainbow;
+  uniforms.u_muonTracks.value = state.muonTracks;
+  uniforms.u_muonCount.value = state.muonCount;
+  uniforms.u_muonSeed.value = state.muonSeed;
+  uniforms.u_outerStart.value.copy(state.outerStart);
+  uniforms.u_outerMid.value.copy(state.outerMid);
+  uniforms.u_outerEnd.value.copy(state.outerEnd);
+  uniforms.u_outerFullRainbow.value = state.outerFullRainbow;
+  uniforms.u_innerStart.value.copy(state.innerStart);
+  uniforms.u_innerMid.value.copy(state.innerMid);
+  uniforms.u_innerEnd.value.copy(state.innerEnd);
+  uniforms.u_innerFullRainbow.value = state.innerFullRainbow;
+}
+
+function requestRender(lowResPreview = false) {
+  if (renderTimer) cancelAnimationFrame(renderTimer);
+  if (hiResTimer) clearTimeout(hiResTimer);
+
+  renderTimer = requestAnimationFrame(() => {
+    const scale = lowResPreview ? 0.5 : 1.0;
+    setCanvasResolution(scale);
+    syncUniforms();
+
+    const gl = renderer.getContext();
+    const t0 = performance.now();
+    renderer.render(scene, camera);
+
+    // 反復回数が30回を超える高負荷設定時は、1ピクセル読み出しでGPU完了を同期計測する
+    let elapsed = 0;
+    if (state.maxIter > 30) {
+      const pixel = new Uint8Array(4);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      elapsed = performance.now() - t0;
+    } else {
+      elapsed = performance.now() - t0;
+    }
+
+    // フル解像度換算の推定計算時間（0.5倍プレビュー時は面積比4倍で推定）
+    const estimatedFullTime = lowResPreview ? elapsed * 3.8 : elapsed;
+
+    // 1秒（1000ms）を超える場合は警告を出し、安全圏まで反復上限を自動で引き下げる
+    if (estimatedFullTime > 1000.0 && state.maxIter > 16) {
+      const safeIter = Math.max(16, Math.floor(state.maxIter * (800.0 / estimatedFullTime)));
+      state.maxIter = safeIter;
+      const iterSlider = document.getElementById('slider-iter');
+      const iterVal = document.getElementById('val-iter');
+      if (iterSlider) iterSlider.value = safeIter;
+      if (iterVal) iterVal.textContent = safeIter;
+
+      if (state.minIter >= safeIter) {
+        state.minIter = Math.max(0, safeIter - 2);
+        const minSlider = document.getElementById('slider-miniter');
+        const minVal = document.getElementById('val-miniter');
+        if (minSlider) minSlider.value = state.minIter;
+        if (minVal) minVal.textContent = state.minIter;
+      }
+
+      showWarningToast(`⚠️ 描画負荷が1秒を超えたため反復上限を ${safeIter} 回に自動調整しました`);
+      setCanvasResolution(1.0);
+      syncUniforms();
+      renderer.render(scene, camera);
+      return;
+    }
+
+    if (lowResPreview) {
+      hiResTimer = setTimeout(() => {
+        requestRender(false);
+      }, 180);
+    }
+  });
+}
+
+// --- 画面サイズの更新 ---
+function updateSize() {
+  requestRender(false);
+}
+window.addEventListener('resize', updateSize);
+
+// --- ミュオグラフィ観測対象カラーパレット（外部・内部 独立2系統） ---
+const previewOuter = document.getElementById('color-preview-outer');
+const previewInner = document.getElementById('color-preview-inner');
+const rainbowSlider = document.getElementById('slider-rainbow');
+const rainbowVal = document.getElementById('val-rainbow');
+
+function setRainbowValue(v) {
+  state.rainbow = v;
+  if (rainbowSlider) rainbowSlider.value = v;
+  if (rainbowVal) rainbowVal.textContent = v.toFixed(2);
+}
+
+function updateColorPreview() {
+  if (previewOuter) {
+    if (state.outerFullRainbow > 0.5) {
+      previewOuter.style.background = 'linear-gradient(90deg, #ff0055, #ffaa00, #00ff66, #00aaff, #aa00ff)';
+    } else {
+      const c1 = `#${state.outerStart.getHexString()}`;
+      const c2 = `#${state.outerMid.getHexString()}`;
+      const c3 = `#${state.outerEnd.getHexString()}`;
+      previewOuter.style.background = `linear-gradient(90deg, #030508 0%, ${c1} 30%, ${c2} 65%, ${c3} 100%)`;
+    }
+  }
+  if (previewInner) {
+    if (state.innerFullRainbow > 0.5) {
+      previewInner.style.background = 'linear-gradient(90deg, #ff0055, #ffaa00, #00ff66, #00aaff, #aa00ff)';
+    } else {
+      const c1 = `#${state.innerStart.getHexString()}`;
+      const c2 = `#${state.innerMid.getHexString()}`;
+      const c3 = `#${state.innerEnd.getHexString()}`;
+      previewInner.style.background = `linear-gradient(90deg, #030508 0%, ${c1} 30%, ${c2} 65%, ${c3} 100%)`;
+    }
+  }
+}
+
+function generateRandomGradient(target) {
+  const h1 = Math.random();
+  const h2 = (h1 + 0.12 + Math.random() * 0.25) % 1.0;
+  const h3 = (h2 + 0.12 + Math.random() * 0.25) % 1.0;
+
+  if (target === 'outer') {
+    state.outerStart.setHSL(h1, 0.7 + Math.random() * 0.3, 0.15);
+    state.outerMid.setHSL(h2,   0.8 + Math.random() * 0.2, 0.45);
+    state.outerEnd.setHSL(h3,   0.8 + Math.random() * 0.2, 0.80);
+    state.outerFullRainbow = 0.0;
+  } else {
+    state.innerStart.setHSL(h1, 0.7 + Math.random() * 0.3, 0.15);
+    state.innerMid.setHSL(h2,   0.8 + Math.random() * 0.2, 0.45);
+    state.innerEnd.setHSL(h3,   0.8 + Math.random() * 0.2, 0.80);
+    state.innerFullRainbow = 0.0;
+  }
+
+  updateColorPreview();
+  requestRender(false);
+}
+
+const presets = {
+  cherenkov: { start: 0x020b26, mid: 0x0044ff, end: 0xaaddff, fullRainbow: 0.0 },
+  magma:     { start: 0x220000, mid: 0xff2200, end: 0xffee55, fullRainbow: 0.0 },
+  concrete:  { start: 0x16181d, mid: 0x646b78, end: 0xf1f5f9, fullRainbow: 0.0 },
+  pyramid:   { start: 0x241203, mid: 0xb4690e, end: 0xffebb3, fullRainbow: 0.0 },
+  heatmap:   { start: 0x11053c, mid: 0xd91b5c, end: 0xfef08a, fullRainbow: 0.0 },
+  rainbow:   { start: 0x051937, mid: 0x008793, end: 0xa8eb12, fullRainbow: 1.0 }
+};
+
+document.getElementById('btn-random-outer').addEventListener('click', () => generateRandomGradient('outer'));
+document.getElementById('btn-random-inner').addEventListener('click', () => generateRandomGradient('inner'));
+
+document.querySelectorAll('[data-preset]').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    const p = presets[e.currentTarget.dataset.preset];
+    const target = e.currentTarget.dataset.target;
+    if (!p) return;
+
+    if (target === 'outer') {
+      state.outerStart.setHex(p.start);
+      state.outerMid.setHex(p.mid);
+      state.outerEnd.setHex(p.end);
+      state.outerFullRainbow = p.fullRainbow;
+    } else {
+      state.innerStart.setHex(p.start);
+      state.innerMid.setHex(p.mid);
+      state.innerEnd.setHex(p.end);
+      state.innerFullRainbow = p.fullRainbow;
+    }
+    if (p.fullRainbow > 0.5 && state.rainbow < 1.0) {
+      setRainbowValue(2.0);
+    }
+    updateColorPreview();
+    requestRender(false);
+  });
+});
+
+// --- UIイベントのバインド ---
+function bindSlider(id, valId, key) {
+  const slider = document.getElementById(id);
+  const valSpan = document.getElementById(valId);
+  if (!slider) return;
+  slider.addEventListener('input', () => {
+    let v = parseFloat(slider.value);
+    // 反復下限と反復上限が逆転しないように連動補正
+    if (key === 'minIter' && v >= state.maxIter) {
+      v = Math.max(0, state.maxIter - 1);
+      slider.value = v;
+    } else if (key === 'maxIter' && v <= state.minIter) {
+      state.minIter = Math.max(0, v - 1);
+      const minSlider = document.getElementById('slider-miniter');
+      const minVal = document.getElementById('val-miniter');
+      if (minSlider) minSlider.value = state.minIter;
+      if (minVal) minVal.textContent = state.minIter;
+    }
+    state[key] = v;
+    const isInt = (key === 'minIter' || key === 'maxIter' || key === 'muonCount');
+    if (valSpan) valSpan.textContent = isInt ? Math.round(v) : v.toFixed(2);
+    if (key === 'rainbow') updateColorPreview();
+    syncUniforms();
+    requestRender(true);
+  });
+}
+
+bindSlider('slider-power', 'val-power', 'power');
+bindSlider('slider-density', 'val-density', 'density');
+bindSlider('slider-scope', 'val-scope', 'scopeRadius');
+bindSlider('slider-scopex', 'val-scopex', 'scopeX');
+bindSlider('slider-scopey', 'val-scopey', 'scopeY');
+bindSlider('slider-fold', 'val-fold', 'fold');
+bindSlider('slider-julia', 'val-julia', 'julia');
+bindSlider('slider-twist', 'val-twist', 'twist');
+bindSlider('slider-miniter', 'val-miniter', 'minIter');
+bindSlider('slider-iter', 'val-iter', 'maxIter');
+bindSlider('slider-rainbow', 'val-rainbow', 'rainbow');
+bindSlider('slider-tracks', 'val-tracks', 'muonTracks');
+bindSlider('slider-trackcount', 'val-trackcount', 'muonCount');
+
+document.getElementById('btn-reroll-tracks').addEventListener('click', () => {
+  state.muonSeed = +(Math.random() * 1000.0).toFixed(3);
+  syncUniforms();
+  requestRender(false);
+});
+
+document.getElementById('check-xray').addEventListener('change', (e) => {
+  state.xrayMode = e.target.checked ? 1.0 : 0.0;
+  requestRender();
+});
+
+// パネル開閉（閉じると正方形キャンバスが自動で大きく広がります）
+const uiPanel = document.getElementById('ui-panel');
+const toggleLabel = document.getElementById('toggle-label');
+document.getElementById('panel-toggle').addEventListener('click', () => {
+  uiPanel.classList.toggle('collapsed');
+  toggleLabel.textContent = uiPanel.classList.contains('collapsed') ? '▲ 設定を開く' : '▼ 閉じる';
+  updateSize();
+});
+
+// --- 3Dオービット回転・平行移動・ズーム操作（動的解像度でスマホも快適） ---
+let isDragging = false;
+let dragMode = 'orbit';
+let lastX = 0, lastY = 0;
+let initialPinchDist = 0;
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    isDragging = true;
+    dragMode = 'orbit';
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+  } else if (e.touches.length === 2) {
+    isDragging = true;
+    dragMode = 'pan';
+    lastX = (e.touches[0].clientX + e.touches[1].clientX) * 0.5;
+    lastY = (e.touches[0].clientY + e.touches[1].clientY) * 0.5;
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    initialPinchDist = Math.hypot(dx, dy);
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  if (!isDragging) return;
+  e.preventDefault();
+  const minDim = Math.min(window.innerWidth, window.innerHeight);
+
+  if (e.touches.length === 1 && dragMode === 'orbit') {
+    const dx = e.touches[0].clientX - lastX;
+    const dy = e.touches[0].clientY - lastY;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+
+    state.rotX -= dx * 0.007;
+    state.rotY = Math.max(-1.5, Math.min(1.5, state.rotY - dy * 0.007));
+    requestRender(true);
+  } else if (e.touches.length === 2) {
+    const cx = (e.touches[0].clientX + e.touches[1].clientX) * 0.5;
+    const cy = (e.touches[0].clientY + e.touches[1].clientY) * 0.5;
+    const dx = cx - lastX;
+    const dy = cy - lastY;
+    lastX = cx;
+    lastY = cy;
+
+    state.pan.x += (dx * 2.0 / minDim) / state.zoom;
+    state.pan.y -= (dy * 2.0 / minDim) / state.zoom;
+
+    const pdx = e.touches[0].clientX - e.touches[1].clientX;
+    const pdy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.hypot(pdx, pdy);
+    if (initialPinchDist > 0) {
+      const scale = dist / initialPinchDist;
+      state.zoom = Math.max(0.25, Math.min(12.0, state.zoom * scale));
+      initialPinchDist = dist;
+    }
+    requestRender(true);
+  }
+}, { passive: false });
+
+window.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) {
+    isDragging = false;
+    requestRender(false);
+  }
+});
+
+function setScopeFromClientPos(clientX, clientY, lowRes = false) {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((clientX - rect.left) / rect.width) * 2.0 - 1.0;
+  const y = -(((clientY - rect.top) / rect.height) * 2.0 - 1.0);
+  state.scopeX = Math.max(-1.0, Math.min(1.0, x));
+  state.scopeY = Math.max(-1.0, Math.min(1.0, y));
+  const sx = document.getElementById('slider-scopex');
+  const sy = document.getElementById('slider-scopey');
+  const vx = document.getElementById('val-scopex');
+  const vy = document.getElementById('val-scopey');
+  if (sx) sx.value = state.scopeX;
+  if (sy) sy.value = state.scopeY;
+  if (vx) vx.textContent = state.scopeX.toFixed(2);
+  if (vy) vy.textContent = state.scopeY.toFixed(2);
+  requestRender(lowRes);
+}
+
+canvas.addEventListener('dblclick', (e) => {
+  setScopeFromClientPos(e.clientX, e.clientY, false);
+});
+
+canvas.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  if (e.altKey) {
+    dragMode = 'scope';
+    setScopeFromClientPos(e.clientX, e.clientY, true);
+  } else {
+    dragMode = (e.button === 2 || e.shiftKey) ? 'pan' : 'orbit';
+  }
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+
+  if (dragMode === 'scope') {
+    setScopeFromClientPos(e.clientX, e.clientY, true);
+    return;
+  } else if (dragMode === 'orbit') {
+    state.rotX -= dx * 0.006;
+    state.rotY = Math.max(-1.5, Math.min(1.5, state.rotY - dy * 0.006));
+  } else {
+    const rect = canvas.getBoundingClientRect();
+    state.pan.x += (dx * 2.0 / rect.width) / state.zoom;
+    state.pan.y -= (dy * 2.0 / rect.height) / state.zoom;
+  }
+  requestRender(true);
+});
+
+window.addEventListener('mouseup', () => {
+  if (isDragging) {
+    isDragging = false;
+    requestRender(false);
+  }
+});
+
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.08 : 0.92;
+  state.zoom = Math.max(0.25, Math.min(12.0, state.zoom * factor));
+  requestRender(true);
+}, { passive: false });
+
+// --- 16:9 4K 高解像度保存 ---
+document.getElementById('btn-save').addEventListener('click', () => {
+  toast.textContent = 'RENDERING 4K (3840x2160)...';
+  toast.classList.add('visible');
+
+  // UIスレッドでトーストを表示させてからレンダリングを実行
+  setTimeout(() => {
+    const outW = 2160;
+    const outH = 2160;
+
+    // ガイド枠と一致するようにスケール補正しつつ4Kサイズに変更
+    renderer.setPixelRatio(1.0);
+    renderer.setSize(outW, outH, false);
+    uniforms.u_resolution.value.set(outW, outH);
+
+    renderer.render(scene, camera);
+
+    const link = document.createElement('a');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    link.download = `cosmic-raymarching_${timestamp}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+
+    // 元の画面サイズに戻す
+    toast.textContent = 'CALCULATING MUOGRAPHY...';
+    toast.classList.remove('visible');
+    updateSize();
+  }, 50);
+});
+
+// 初期描画
+updateColorPreview();
+updateSize();
+</script>
+</body>
+</html>
