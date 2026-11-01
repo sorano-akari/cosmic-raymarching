@@ -129,6 +129,17 @@
       transition: opacity 0.2s; z-index: 20; letter-spacing: 1px;
     }
     #status-toast.visible { opacity: 1; }
+
+    /* PC・タブレット横画面向けのサイドバー化レイアウト */
+    @media (min-width: 768px) and (orientation: landscape) {
+      body, html { flex-direction: row; }
+      #ui-panel {
+        width: 380px; max-height: 100vh; height: 100%;
+        border-top: none; border-left: 1px solid rgba(0, 229, 255, 0.25);
+        display: flex; flex-direction: column;
+      }
+      .control-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -152,29 +163,26 @@
   </div>
 
   <div class="control-grid">
-    <!-- 1. フラクタル次数 -->
     <div class="control-group">
       <div class="control-label">
-        <span>フラクタル次数 (Power)</span>
+        <span>フラクタル次数 [ トゲ ]</span>
         <span class="val-display" id="val-power">6.0</span>
       </div>
       <input type="range" id="slider-power" min="2.0" max="10.0" step="0.1" value="6.0">
     </div>
 
-    <!-- 2. 透過度・密度 -->
     <div class="control-group">
       <div class="control-label">
-        <span>媒質密度 / 阻止能 (Density)</span>
+        <span>媒質密度 / 阻止能 [ 重さ ]</span>
         <span class="val-display" id="val-density">22.0</span>
       </div>
       <input type="range" id="slider-density" min="5.0" max="50.0" step="0.5" value="22.0">
     </div>
 
-<!-- 5. 内部透過モード (旧X線スコープ) -->
     <div class="control-group">
       <label class="checkbox-row">
         <input type="checkbox" id="check-xray" checked>
-        <span>内部透過モード (外皮を剥がして骨格を透視)</span>
+        <span>内部透過モード (外皮を剥がして透視)</span>
       </label>
       <div class="control-label" style="margin-top:4px;">
         <span>内部透過径 (Penetration Radius)</span>
@@ -182,111 +190,110 @@
       </div>
       <input type="range" id="slider-scope" min="0.1" max="1.5" step="0.05" value="0.65">
       <div class="control-label" style="margin-top:4px;">
-        <span>透過位置 X / Y (Scope Center)</span>
+        <span>透過位置 X / Y [ スキャン ]</span>
         <span class="val-display"><span id="val-scopex">0.00</span>, <span id="val-scopey">0.00</span></span>
       </div>
       <div style="display:flex; gap:8px;">
         <input type="range" id="slider-scopex" min="-1.0" max="1.0" step="0.02" value="0.00" title="透過位置 X">
         <input type="range" id="slider-scopey" min="-1.0" max="1.0" step="0.02" value="0.00" title="透過位置 Y">
       </div>
+      <label class="checkbox-row" style="margin-top:6px; color:#94a3b8;">
+        <input type="checkbox" id="check-autoscan">
+        <span>自動スキャン (Auto Scan)</span>
+      </label>
     </div>
 
-    <!-- 6-1. 外部カラーパレット設定 (外皮・通常領域) -->
     <div class="control-group">
-      <div class="control-label">
-        <span>外部パレット (Outer Shell Palette)</span>
-      </div>
+      <div class="control-label"><span>外部パレット (Outer Shell)</span></div>
       <div class="palette-row">
         <button class="btn" data-target="outer" data-preset="cherenkov">チェレンコフ</button>
         <button class="btn" data-target="outer" data-preset="magma">マグマ</button>
         <button class="btn" data-target="outer" data-preset="concrete">コンクリート</button>
         <button class="btn" data-target="outer" data-preset="pyramid">ピラミッド</button>
-        <button class="btn" data-target="outer" data-preset="heatmap">ヒートマップ</button>
+        <button class="btn" data-target="outer" data-preset="void">ボイド</button>
+        <button class="btn" data-target="outer" data-preset="aurora">オーロラ</button>
+        <button class="btn" data-target="outer" data-preset="neon">ネオン</button>
+        <button class="btn" data-target="outer" data-preset="xray">X線</button>
         <button class="btn" data-target="outer" data-preset="rainbow">🌈</button>
-        <button class="btn" id="btn-random-outer">🎲</button>
+        <button class="btn" id="btn-random-outer" title="ランダム">🎲</button>
+        <button class="btn" id="btn-invert-outer" title="順序を反転">🌗</button>
         <div id="color-preview-outer" style="height:18px; flex-grow:1; border-radius:3px; border:1px solid rgba(255,255,255,0.25); min-width:50px;"></div>
       </div>
     </div>
 
-    <!-- 6-2. 内部カラーパレット設定 (透過スコープ内コア) -->
     <div class="control-group">
-      <div class="control-label">
-        <span>内部パレット (Inner Core Palette)</span>
-      </div>
+      <div class="control-label"><span>内部パレット (Inner Core)</span></div>
       <div class="palette-row">
         <button class="btn" data-target="inner" data-preset="cherenkov">チェレンコフ</button>
         <button class="btn" data-target="inner" data-preset="magma">マグマ</button>
         <button class="btn" data-target="inner" data-preset="concrete">コンクリート</button>
         <button class="btn" data-target="inner" data-preset="pyramid">ピラミッド</button>
-        <button class="btn" data-target="inner" data-preset="heatmap">ヒートマップ</button>
+        <button class="btn" data-target="inner" data-preset="void">ボイド</button>
+        <button class="btn" data-target="inner" data-preset="aurora">オーロラ</button>
+        <button class="btn" data-target="inner" data-preset="neon">ネオン</button>
+        <button class="btn" data-target="inner" data-preset="xray">X線</button>
         <button class="btn" data-target="inner" data-preset="rainbow">🌈</button>
-        <button class="btn" id="btn-random-inner">🎲</button>
+        <button class="btn" id="btn-random-inner" title="ランダム">🎲</button>
+        <button class="btn" id="btn-invert-inner" title="順序を反転">🌗</button>
         <div id="color-preview-inner" style="height:18px; flex-grow:1; border-radius:3px; border:1px solid rgba(255,255,255,0.25); min-width:50px;"></div>
       </div>
     </div>
 
-  <!-- 7. 空間折り返し (Box Fold) -->
     <div class="control-group">
       <div class="control-label">
-        <span>空間折り返し / 結晶化 (Box Fold)</span>
+        <span>空間折り返し [ ブロック化 ]</span>
         <span class="val-display" id="val-fold">0.00</span>
       </div>
       <input type="range" id="slider-fold" min="0.0" max="1.0" step="0.02" value="0.00">
     </div>
 
-    <!-- 8. ジュリア集合ブレンド (Julia Mix) -->
     <div class="control-group">
       <div class="control-label">
-        <span>ジュリア集合化 (Julia Mix)</span>
+        <span>ジュリア集合化 [ 魔法陣 ]</span>
         <span class="val-display" id="val-julia">0.00</span>
       </div>
       <input type="range" id="slider-julia" min="0.0" max="1.0" step="0.02" value="0.00">
     </div>
 
-    <!-- 9. 内部回転・ねじれ (Internal Twist) -->
     <div class="control-group">
       <div class="control-label">
-        <span>内部ねじれ角 (Twist)</span>
+        <span>内部ねじれ角 [ 渦巻き ]</span>
         <span class="val-display" id="val-twist">0.35</span>
       </div>
       <input type="range" id="slider-twist" min="0.0" max="3.14" step="0.05" value="0.35">
     </div>
 
-    <!-- 10-1. 反復回数下限 (Min Iterations) -->
     <div class="control-group">
       <div class="control-label">
-        <span>反復回数下限 (Min Iterations)</span>
+        <span>反復回数下限 [ 芯の抽出 ]</span>
         <span class="val-display" id="val-miniter">0</span>
       </div>
       <input type="range" id="slider-miniter" min="0" max="300" step="1" value="0">
     </div>
 
-    <!-- 10. 最大反復回数 (Max Iterations) -->
     <div class="control-group">
       <div class="control-label">
-        <span>反復回数上限 (Max Iterations)</span>
+        <span>反復回数上限 [ 描画の深み ]</span>
         <span class="val-display" id="val-iter">12</span>
       </div>
       <input type="range" id="slider-iter" min="2" max="1200" step="1" value="12">
     </div>
 
-    <!-- 11. マルチカラー周期 (Rainbow Cycles) -->
     <div class="control-group">
       <div class="control-label">
-        <span>反復マルチカラー周期 (Rainbow)</span>
-        <span class="val-display" id="val-rainbow">0.00</span>
+        <span>マルチカラー周期 [ 色のループ ]</span>
+        <span class="val-display" id="val-rainbow">1.00</span>
       </div>
-      <input type="range" id="slider-rainbow" min="0.0" max="5.0" step="0.1" value="0.0">
+      <input type="range" id="slider-rainbow" min="1.0" max="5.0" step="0.1" value="1.0">
     </div>
 
-    <!-- 12. 宇宙線ミュオン飛跡 (Muon Tracks) -->
     <div class="control-group">
       <div class="control-label">
         <span>ミュオン飛跡 本数 / 引き直し</span>
-        <span class="val-display" id="val-trackcount">18</span>
+        <span class="val-display" id="val-trackcount">0</span>
       </div>
       <div style="display:flex; gap:8px; align-items:center;">
-        <input type="range" id="slider-trackcount" min="0" max="64" step="1" value="18" style="flex:1;">
+        <input type="range" id="slider-trackcount" min="0" max="64" step="1" value="0" style="flex:1;">
         <button class="btn" id="btn-reroll-tracks" style="padding:3px 8px; white-space:nowrap;">🎲 飛跡引き直し</button>
       </div>
       <div class="control-label" style="margin-top:4px;">
@@ -318,20 +325,26 @@ const state = {
   twist: 0.35,
   minIter: 0.0,
   maxIter: 12.0,
-  rainbow: 0.0,
+  rainbow: 1.0,
   muonTracks: 1.0,
+  muonCount: 0.0,
+  muonSeed: 1.0,
   pan: new THREE.Vector2(0.0, 0.0),
   zoom: 1.0,
+  autoScan: false,
+  scanTime: 0.0,
   // 外部パレット（初期値：チェレンコフ）
   outerStart: new THREE.Color(0x020b26),
   outerMid:   new THREE.Color(0x0044ff),
   outerEnd:   new THREE.Color(0xaaddff),
   outerFullRainbow: 0.0,
+  outerReversed: 0.0,
   // 内部パレット（初期値：マグマ — 内外の対比がひと目でわかる初期構成）
   innerStart: new THREE.Color(0x220000),
   innerMid:   new THREE.Color(0xff2200),
   innerEnd:   new THREE.Color(0xffee55),
-  innerFullRainbow: 0.0
+  innerFullRainbow: 0.0,
+  innerReversed: 0.0
 };
 
 // --- Three.js 初期化 ---
@@ -378,10 +391,12 @@ const fragmentShader = `
   uniform vec3 u_outerMid;
   uniform vec3 u_outerEnd;
   uniform float u_outerFullRainbow;
+  uniform float u_outerReversed;
   uniform vec3 u_innerStart;
   uniform vec3 u_innerMid;
   uniform vec3 u_innerEnd;
   uniform float u_innerFullRainbow;
+  uniform float u_innerReversed;
 
   mat2 rot(float a) {
     float s = sin(a), c = cos(a);
@@ -615,12 +630,14 @@ const fragmentShader = `
 
     // --- 1. 外部パレットによる外皮（Outer Shell）の色彩計算 ---
     float outerPhase = vShell * 0.5 + avgIter * u_rainbow;
+    if (u_outerReversed > 0.5 && u_outerFullRainbow > 0.5) outerPhase = -outerPhase;
     vec3 outerPal = evalPalette(outerPhase, u_outerStart, u_outerMid, u_outerEnd, u_outerFullRainbow);
     vec3 outerCol = outerPal * (0.15 + 0.95 * vShell);
     outerCol += mix(u_outerEnd, vec3(1.0), 0.35) * pow(vShell, 3.0) * 0.35;
 
     // --- 2. 内部パレットによる内部骨格（Inner Core）の色彩計算 ---
     float innerPhase = vCore * 0.5 + avgIter * u_rainbow;
+    if (u_innerReversed > 0.5 && u_innerFullRainbow > 0.5) innerPhase = -innerPhase;
     vec3 innerPal = evalPalette(innerPhase, u_innerStart, u_innerMid, u_innerEnd, u_innerFullRainbow);
     vec3 innerCol = innerPal * (0.15 + 0.95 * vCore);
     innerCol += mix(u_innerEnd, vec3(1.0), 0.45) * pow(vCore, 3.5) * 0.42;
@@ -668,10 +685,12 @@ const uniforms = {
   u_outerMid: { value: state.outerMid },
   u_outerEnd: { value: state.outerEnd },
   u_outerFullRainbow: { value: state.outerFullRainbow },
+  u_outerReversed: { value: state.outerReversed },
   u_innerStart: { value: state.innerStart },
   u_innerMid: { value: state.innerMid },
   u_innerEnd: { value: state.innerEnd },
-  u_innerFullRainbow: { value: state.innerFullRainbow }
+  u_innerFullRainbow: { value: state.innerFullRainbow },
+  u_innerReversed: { value: state.innerReversed }
 };
 
 const material = new THREE.ShaderMaterial({
@@ -736,10 +755,12 @@ function syncUniforms() {
   uniforms.u_outerMid.value.copy(state.outerMid);
   uniforms.u_outerEnd.value.copy(state.outerEnd);
   uniforms.u_outerFullRainbow.value = state.outerFullRainbow;
+  uniforms.u_outerReversed.value = state.outerReversed;
   uniforms.u_innerStart.value.copy(state.innerStart);
   uniforms.u_innerMid.value.copy(state.innerMid);
   uniforms.u_innerEnd.value.copy(state.innerEnd);
   uniforms.u_innerFullRainbow.value = state.innerFullRainbow;
+  uniforms.u_innerReversed.value = state.innerReversed;
 }
 
 function requestRender(lowResPreview = false) {
@@ -747,6 +768,32 @@ function requestRender(lowResPreview = false) {
   if (hiResTimer) clearTimeout(hiResTimer);
 
   renderTimer = requestAnimationFrame(() => {
+    if (state.autoScan) {
+      // ラスタースキャン（ジグザグ走査）のロジック
+      // scanTime を進め、それを元にX・Y座標を算出する
+      state.scanTime += 0.006; 
+      // X軸：一定速度で往復 (三角波)
+      const xCycle = (state.scanTime % 2.0) - 1.0;
+      const scanX = Math.abs(xCycle) * 2.0 - 1.0; // -1.0 から 1.0 を往復
+      
+      // Y軸：X軸が1往復するごとに1段階下がる (階段状)
+      const ySteps = 8.0; // 縦の分割数
+      const yLevel = Math.floor(state.scanTime * 0.5) % ySteps;
+      const scanY = 1.0 - (yLevel / (ySteps - 1.0)) * 2.0; // 1.0 から -1.0 へ段階的に下降
+
+      state.scopeX = scanX * 0.85; // 端まで行きすぎないように少し絞る
+      state.scopeY = scanY * 0.85;
+      
+      const sx = document.getElementById('slider-scopex');
+      const sy = document.getElementById('slider-scopey');
+      const vx = document.getElementById('val-scopex');
+      const vy = document.getElementById('val-scopey');
+      if (sx) sx.value = state.scopeX;
+      if (sy) sy.value = state.scopeY;
+      if (vx) vx.textContent = state.scopeX.toFixed(2);
+      if (vy) vy.textContent = state.scopeY.toFixed(2);
+    }
+
     const scale = lowResPreview ? 0.5 : 1.0;
     setCanvasResolution(scale);
     syncUniforms();
@@ -796,6 +843,9 @@ function requestRender(lowResPreview = false) {
       hiResTimer = setTimeout(() => {
         requestRender(false);
       }, 180);
+    } else if (state.autoScan) {
+      // フル解像度でも自動スキャン中は連続描画を続ける
+      requestRender(false);
     }
   });
 }
@@ -867,12 +917,34 @@ const presets = {
   magma:     { start: 0x220000, mid: 0xff2200, end: 0xffee55, fullRainbow: 0.0 },
   concrete:  { start: 0x16181d, mid: 0x646b78, end: 0xf1f5f9, fullRainbow: 0.0 },
   pyramid:   { start: 0x241203, mid: 0xb4690e, end: 0xffebb3, fullRainbow: 0.0 },
-  heatmap:   { start: 0x11053c, mid: 0xd91b5c, end: 0xfef08a, fullRainbow: 0.0 },
+  void:      { start: 0x0a001a, mid: 0x4a0080, end: 0xff00ff, fullRainbow: 0.0 },
+  aurora:    { start: 0x001a11, mid: 0x008080, end: 0x00ff88, fullRainbow: 0.0 },
+  neon:      { start: 0x1a001a, mid: 0xff0055, end: 0x00ffff, fullRainbow: 0.0 },
+  xray:      { start: 0x00111a, mid: 0x008888, end: 0xddffff, fullRainbow: 0.0 },
   rainbow:   { start: 0x051937, mid: 0x008793, end: 0xa8eb12, fullRainbow: 1.0 }
 };
 
 document.getElementById('btn-random-outer').addEventListener('click', () => generateRandomGradient('outer'));
 document.getElementById('btn-random-inner').addEventListener('click', () => generateRandomGradient('inner'));
+
+// パレットのグラデーション順序（start と end）を入れ替える。レインボー時は反転フラグを切り替える。
+function reversePaletteOrder(target) {
+  if (target === 'outer') {
+    const temp = state.outerStart.clone();
+    state.outerStart.copy(state.outerEnd);
+    state.outerEnd.copy(temp);
+    state.outerReversed = state.outerReversed > 0.5 ? 0.0 : 1.0;
+  } else {
+    const temp = state.innerStart.clone();
+    state.innerStart.copy(state.innerEnd);
+    state.innerEnd.copy(temp);
+    state.innerReversed = state.innerReversed > 0.5 ? 0.0 : 1.0;
+  }
+  updateColorPreview();
+  requestRender(false);
+}
+document.getElementById('btn-invert-outer').addEventListener('click', () => reversePaletteOrder('outer'));
+document.getElementById('btn-invert-inner').addEventListener('click', () => reversePaletteOrder('inner'));
 
 document.querySelectorAll('[data-preset]').forEach(btn => {
   btn.addEventListener('click', (e) => {
@@ -885,11 +957,13 @@ document.querySelectorAll('[data-preset]').forEach(btn => {
       state.outerMid.setHex(p.mid);
       state.outerEnd.setHex(p.end);
       state.outerFullRainbow = p.fullRainbow;
+      state.outerReversed = 0.0;
     } else {
       state.innerStart.setHex(p.start);
       state.innerMid.setHex(p.mid);
       state.innerEnd.setHex(p.end);
       state.innerFullRainbow = p.fullRainbow;
+      state.innerReversed = 0.0;
     }
     if (p.fullRainbow > 0.5 && state.rainbow < 1.0) {
       setRainbowValue(2.0);
@@ -942,6 +1016,18 @@ bindSlider('slider-trackcount', 'val-trackcount', 'muonCount');
 
 document.getElementById('btn-reroll-tracks').addEventListener('click', () => {
   state.muonSeed = +(Math.random() * 1000.0).toFixed(3);
+  state.muonTracks = parseFloat(document.getElementById('slider-tracks').value);
+  
+  let count = parseInt(document.getElementById('slider-trackcount').value, 10);
+  if (count <= 0) {
+    count = 18;
+    const countSlider = document.getElementById('slider-trackcount');
+    const countVal = document.getElementById('val-trackcount');
+    if (countSlider) countSlider.value = count;
+    if (countVal) countVal.textContent = count;
+  }
+  state.muonCount = count;
+
   syncUniforms();
   requestRender(false);
 });
@@ -949,6 +1035,11 @@ document.getElementById('btn-reroll-tracks').addEventListener('click', () => {
 document.getElementById('check-xray').addEventListener('change', (e) => {
   state.xrayMode = e.target.checked ? 1.0 : 0.0;
   requestRender();
+});
+
+document.getElementById('check-autoscan').addEventListener('change', (e) => {
+  state.autoScan = e.target.checked;
+  if (state.autoScan) requestRender(false); // スキャン開始
 });
 
 // パネル開閉（閉じると正方形キャンバスが自動で大きく広がります）
