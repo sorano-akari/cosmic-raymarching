@@ -125,7 +125,7 @@
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       background: rgba(0,0,0,0.85); border: 1px solid var(--accent);
       padding: 12px 24px; border-radius: 6px; font-size: 13px;
-      color: var(--accent); pointer-events: none; opacity: 0;
+      color: var(--accent); pointer-events: auto; cursor: pointer; opacity: 0;
       transition: opacity 0.2s; z-index: 20; letter-spacing: 1px;
     }
     #status-toast.visible { opacity: 1; }
@@ -201,6 +201,11 @@
         <input type="checkbox" id="check-autoscan">
         <span>自動スキャン (Auto Scan)</span>
       </label>
+      <div class="control-label" style="margin-top:4px;">
+        <span>自動スキャン速度 (Scan Speed)</span>
+        <span class="val-display" id="val-scanspeed">1.0</span>
+      </div>
+      <input type="range" id="slider-scanspeed" min="0.1" max="5.0" step="0.1" value="1.0">
     </div>
 
     <div class="control-group">
@@ -302,6 +307,17 @@
       </div>
       <input type="range" id="slider-tracks" min="0.0" max="2.5" step="0.05" value="1.00">
     </div>
+    
+    <div class="control-group" id="group-targettime" style="display: none; border-top: 1px solid rgba(0, 229, 255, 0.25); padding-top: 12px; margin-top: 4px;">
+      <div class="control-label">
+        <span style="color: #ffaa00; font-weight: bold;">🔥 限界突破 目標レンダリング時間</span>
+        <span class="val-display" style="color: #ffaa00;"><span id="val-targettime">10</span> 分</span>
+      </div>
+      <input type="range" id="slider-targettime" min="1" max="120" step="1" value="10">
+      <div style="font-size: 10px; color: rgba(255,255,255,0.5); margin-top: 4px; line-height: 1.3;">
+        ※テスト計算を行い、この目標時間で極限のディテールが描画されるようレイマーチング精度を自動最適化します。
+      </div>
+    </div>
   </div>
 
   <button class="btn btn-primary" id="btn-save">高解像度で保存 (2160 × 2160 正方形 PNG)</button>
@@ -333,6 +349,11 @@ const state = {
   zoom: 1.0,
   autoScan: false,
   scanTime: 0.0,
+  scanSpeed: 1.0,
+  targetTime: 10.0, // 目標レンダリング時間(分)
+  isLimitBreak: false,
+  isRendering: false,
+  cancelRender: false,
   // 外部パレット（初期値：チェレンコフ）
   outerStart: new THREE.Color(0x020b26),
   outerMid:   new THREE.Color(0x0044ff),
@@ -359,6 +380,10 @@ const renderer = new THREE.WebGLRenderer({
 const scene = new THREE.Scene();
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
+// 隠しコマンド（限界突破）用の状態
+state.isLimitBreak = false;
+let currentMaterial = null;
+
 // --- シェーダー実装 ---
 const vertexShader = `
   void main() {
@@ -366,7 +391,17 @@ const vertexShader = `
   }
 `;
 
-const fragmentShader = `
+// isLimitBreakフラグに応じて、forループの上限などを強力にしたシェーダー文字列を返す
+function getFragmentShader(isLimitBreak, optRaySteps = 400, optRayStepMin = 0.003) {
+  const RAY_STEPS = isLimitBreak ? Math.floor(optRaySteps).toString() : '90';
+  const RAY_STEP_MIN = isLimitBreak ? optRayStepMin.toFixed(6) : '0.012';
+  const RAY_MAX_DIST = isLimitBreak ? '6.5' : '4.6';
+  const MUON_STEPS = isLimitBreak ? '32' : '10';
+  
+  // 限界突破時は反復回数を強制的にブースト（最低250回、最大1200回のディテール保証）
+  const ITER_BOOST = isLimitBreak ? 'clamp(u_maxIter, 250.0, 1200.0)' : 'u_maxIter';
+
+  return `
   precision highp float;
 
   uniform vec2 u_resolution;
@@ -434,7 +469,7 @@ const fragmentShader = `
     vec3 c = mix(p, juliaC, u_julia);
 
     for(int i = 0; i < 1200; i++) {
-      if(float(i) >= u_maxIter) break;
+      if(float(i) >= ${ITER_BOOST}) break;
       if(m > 4.0) break;
 
       if(u_fold > 0.001) {
@@ -521,7 +556,7 @@ const fragmentShader = `
       // ミュオンが入射してから現在地点(s_muon)に至るまでの物質密度を積分して減衰率を求める
       if (lineDist < 0.035) {
         float muonTrans = 1.0; // ミュオンの残存エネルギー（透過率）
-        const int M_STEPS = 10;
+        const int M_STEPS = ${MUON_STEPS};
         float ds = s_muon / float(M_STEPS);
 
         for (int m = 0; m < M_STEPS; m++) {
@@ -580,14 +615,15 @@ const fragmentShader = `
     float weightSum = 0.0;
     float transmittance = 1.0;
 
-    for(int i = 0; i < 90; i++) {
+    for(int i = 0; i < ${RAY_STEPS}; i++) {
       vec3 p = ro + rd * t;
       vec3 res = map(p);
       float d = res.x;
       float orbitCore = res.y;
       float iterVal = res.z;
 
-      float stepSize = max(abs(d) * 0.5, 0.012);
+      // 限界突破時はレイの最小歩幅を小さくし、奥のディテールまで拾いきる
+      float stepSize = max(abs(d) * 0.5, ${RAY_STEP_MIN});
 
       // 阻止能係数：高いほど物質が濃く不透明になり、ミュオンを強く減衰させる
       float stoppingPower = u_density / 22.0;
@@ -619,7 +655,7 @@ const fragmentShader = `
       float absorbRate = mix(effectiveShell * 1.35, sharpSkeleton * 0.25, innerMask);
       transmittance *= exp(-absorbRate * stepSize * 2.5);
 
-      if(transmittance < 0.015 || t > 4.6) break;
+      if(transmittance < 0.015 || t > ${RAY_MAX_DIST}) break;
       t += stepSize;
     }
 
@@ -661,6 +697,7 @@ const fragmentShader = `
     gl_FragColor = vec4(col, 1.0);
   }
 `;
+}
 
 const uniforms = {
   u_resolution: { value: new THREE.Vector2() },
@@ -693,18 +730,41 @@ const uniforms = {
   u_innerReversed: { value: state.innerReversed }
 };
 
-const material = new THREE.ShaderMaterial({
+currentMaterial = new THREE.ShaderMaterial({
   vertexShader,
-  fragmentShader,
+  fragmentShader: getFragmentShader(false),
   uniforms
 });
 
-const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), currentMaterial);
 scene.add(mesh);
 
 // --- 動的解像度スケーリング ＆ GPU計算時間監視（1秒超で自動ブレーキ＆警告） ---
 const toast = document.getElementById('status-toast');
 let renderTimer = null;
+
+// --- 隠しコマンド受付（"U" -> "P"） ---
+let keyBuffer = '';
+window.addEventListener('keydown', (e) => {
+  keyBuffer += e.key.toUpperCase();
+  if (keyBuffer.length > 2) keyBuffer = keyBuffer.slice(-2);
+  
+  if (keyBuffer === 'UP') {
+    state.isLimitBreak = !state.isLimitBreak; // トグル切り替え
+    keyBuffer = '';
+    
+    // シェーダーを再生成してコンパイル
+    currentMaterial.fragmentShader = getFragmentShader(state.isLimitBreak);
+    currentMaterial.needsUpdate = true;
+    
+    if (state.isLimitBreak) {
+      showWarningToast('🔥 LIMIT BREAK MODE: 描画精度 リミッター解除 🔥');
+    } else {
+      showWarningToast('LIMIT BREAK MODE: OFF (通常動作に戻りました)');
+    }
+    requestRender(false);
+  }
+});
 let hiResTimer = null;
 let toastTimer = null;
 
@@ -764,24 +824,46 @@ function syncUniforms() {
 }
 
 function requestRender(lowResPreview = false) {
+  // 限界突破モード中は、スライダー操作やドラッグ中の動的プレビュー(lowResPreview)を完全にスキップする
+  if (state.isLimitBreak && lowResPreview) return;
+
   if (renderTimer) cancelAnimationFrame(renderTimer);
   if (hiResTimer) clearTimeout(hiResTimer);
 
   renderTimer = requestAnimationFrame(() => {
     if (state.autoScan) {
-      // ラスタースキャン（ジグザグ走査）のロジック
-      // scanTime を進め、それを元にX・Y座標を算出する
-      state.scanTime += 0.006; 
-      // X軸：一定速度で往復 (三角波)
-      const xCycle = (state.scanTime % 2.0) - 1.0;
-      const scanX = Math.abs(xCycle) * 2.0 - 1.0; // -1.0 から 1.0 を往復
+      state.scanTime += 0.008 * state.scanSpeed; 
       
-      // Y軸：X軸が1往復するごとに1段階下がる (階段状)
-      const ySteps = 8.0; // 縦の分割数
-      const yLevel = Math.floor(state.scanTime * 0.5) % ySteps;
-      const scanY = 1.0 - (yLevel / (ySteps - 1.0)) * 2.0; // 1.0 から -1.0 へ段階的に下降
+      // スコープ半径から走査線の数を動的に計算 (半径が大きい時は線を少なく、最小2本)
+      // 直径(半径×2)に対して少し重なる程度(×1.5)のシフト量で進む
+      const numLines = Math.max(2.0, Math.floor(1.7 / (state.scopeRadius * 1.5)));
+      
+      // トライアングル波生成関数: 不連続なジャンプをなくし、端で滑らかに折り返す (1 -> -1 -> 1)
+      const tri = (t) => Math.abs((t % 2.0) - 1.0) * 2.0 - 1.0;
+      
+      // 1フェーズ（一番下まで行って、また上に戻ってくる「往復」分）
+      const phaseDuration = numLines * 2.0;
+      const p = state.scanTime;
+      
+      // fastは左右(または上下)の速いスウィープ、slowは徐々に下(または横)へズレる滑らかな連続移動
+      const fast = tri(p);
+      const slow = tri(p / numLines);
+      
+      // phaseDurationごとに「横走査(左右)」と「縦走査(上下)」を切り替える
+      const isVerticalPhase = Math.floor(p / phaseDuration) % 2 === 1;
+      
+      let scanX, scanY;
+      if (!isVerticalPhase) {
+        // 横フェーズ: Xが速く動き、Yが滑らかに下へズレる(斜めにジグザグ走査)
+        scanX = fast;
+        scanY = slow;
+      } else {
+        // 縦フェーズ: Yが速く動き、Xが滑らかに横へズレる
+        scanX = slow;
+        scanY = fast;
+      }
 
-      state.scopeX = scanX * 0.85; // 端まで行きすぎないように少し絞る
+      state.scopeX = scanX * 0.85; // キャンバス端で見えなくなるのを防ぐ
       state.scopeY = scanY * 0.85;
       
       const sx = document.getElementById('slider-scopex');
@@ -815,8 +897,8 @@ function requestRender(lowResPreview = false) {
     // フル解像度換算の推定計算時間（0.5倍プレビュー時は面積比4倍で推定）
     const estimatedFullTime = lowResPreview ? elapsed * 3.8 : elapsed;
 
-    // 1秒（1000ms）を超える場合は警告を出し、安全圏まで反復上限を自動で引き下げる
-    if (estimatedFullTime > 1000.0 && state.maxIter > 16) {
+    // 1秒（1000ms）を超える場合は警告を出し、安全圏まで反復上限を自動で引き下げる（限界突破中は無効化）
+    if (!state.isLimitBreak && estimatedFullTime > 1000.0 && state.maxIter > 16) {
       const safeIter = Math.max(16, Math.floor(state.maxIter * (800.0 / estimatedFullTime)));
       state.maxIter = safeIter;
       const iterSlider = document.getElementById('slider-iter');
@@ -871,7 +953,8 @@ function setRainbowValue(v) {
 function updateColorPreview() {
   if (previewOuter) {
     if (state.outerFullRainbow > 0.5) {
-      previewOuter.style.background = 'linear-gradient(90deg, #ff0055, #ffaa00, #00ff66, #00aaff, #aa00ff)';
+      const deg = state.outerReversed > 0.5 ? '270deg' : '90deg';
+      previewOuter.style.background = `linear-gradient(${deg}, #ff0055, #ffaa00, #00ff66, #00aaff, #aa00ff)`;
     } else {
       const c1 = `#${state.outerStart.getHexString()}`;
       const c2 = `#${state.outerMid.getHexString()}`;
@@ -881,7 +964,8 @@ function updateColorPreview() {
   }
   if (previewInner) {
     if (state.innerFullRainbow > 0.5) {
-      previewInner.style.background = 'linear-gradient(90deg, #ff0055, #ffaa00, #00ff66, #00aaff, #aa00ff)';
+      const deg = state.innerReversed > 0.5 ? '270deg' : '90deg';
+      previewInner.style.background = `linear-gradient(${deg}, #ff0055, #ffaa00, #00ff66, #00aaff, #aa00ff)`;
     } else {
       const c1 = `#${state.innerStart.getHexString()}`;
       const c2 = `#${state.innerMid.getHexString()}`;
@@ -998,6 +1082,14 @@ function bindSlider(id, valId, key) {
     syncUniforms();
     requestRender(true);
   });
+  
+  // 限界突破モード時は input 中に描画されないため、マウスを離した change 時に描画させる
+  slider.addEventListener('change', () => {
+    if (state.isLimitBreak) {
+      syncUniforms();
+      requestRender(false);
+    }
+  });
 }
 
 bindSlider('slider-power', 'val-power', 'power');
@@ -1013,6 +1105,8 @@ bindSlider('slider-iter', 'val-iter', 'maxIter');
 bindSlider('slider-rainbow', 'val-rainbow', 'rainbow');
 bindSlider('slider-tracks', 'val-tracks', 'muonTracks');
 bindSlider('slider-trackcount', 'val-trackcount', 'muonCount');
+bindSlider('slider-scanspeed', 'val-scanspeed', 'scanSpeed');
+bindSlider('slider-targettime', 'val-targettime', 'targetTime');
 
 document.getElementById('btn-reroll-tracks').addEventListener('click', () => {
   state.muonSeed = +(Math.random() * 1000.0).toFixed(3);
@@ -1104,11 +1198,17 @@ canvas.addEventListener('touchmove', (e) => {
     const pdx = e.touches[0].clientX - e.touches[1].clientX;
     const pdy = e.touches[0].clientY - e.touches[1].clientY;
     const dist = Math.hypot(pdx, pdy);
+    
+    // 連続的なズーム: 前回からの差分(delta)をもとに滑らかにスケールを適用する
     if (initialPinchDist > 0) {
-      const scale = dist / initialPinchDist;
-      state.zoom = Math.max(0.25, Math.min(12.0, state.zoom * scale));
-      initialPinchDist = dist;
+      const delta = dist - initialPinchDist;
+      // 画面サイズに依存しない一定のズーム感度を設定
+      const factor = 1.0 + (delta * 0.005); 
+      state.zoom = Math.max(0.25, Math.min(12.0, state.zoom * factor));
     }
+    // 今回の距離を次回の基準として更新することで、ジャンプを防ぐ
+    initialPinchDist = dist;
+    
     requestRender(true);
   }
 }, { passive: false });
@@ -1188,34 +1288,150 @@ canvas.addEventListener('wheel', (e) => {
   requestRender(true);
 }, { passive: false });
 
-// --- 16:9 4K 高解像度保存 ---
-document.getElementById('btn-save').addEventListener('click', () => {
-  toast.textContent = 'RENDERING 4K (3840x2160)...';
+// --- 高解像度保存（タイル分割＆プログレス＆中断＆限界突破時のみの超高精度化） ---
+toast.addEventListener('click', () => {
+  if (state.isRendering && !state.cancelRender) {
+    state.cancelRender = true;
+    toast.textContent = 'CANCELLING...';
+  }
+});
+
+document.getElementById('btn-save').addEventListener('click', async () => {
+  if (state.isRendering) return;
+  state.isRendering = true;
+  state.cancelRender = false;
+
+  const isHQ = state.isLimitBreak;
+  const outSize = isHQ ? 4320 : 2160; // リミッター解除時は8K、通常は4K
+  
+  toast.textContent = isHQ ? 'RENDERING 8K LIMIT BREAK: 0% (クリックで中断)' : 'RENDERING 4K: 0% (クリックで中断)';
   toast.classList.add('visible');
+  
+  // UIを確実に更新するためのウェイト
+  await new Promise(r => setTimeout(r, 50));
 
-  // UIスレッドでトーストを表示させてからレンダリングを実行
-  setTimeout(() => {
-    const outW = 2160;
-    const outH = 2160;
+  let originalMaterial = mesh.material;
+  const tiles = isHQ ? 8 : 4; // 8Kは64分割、4Kは16分割
+  const tileW = Math.ceil(outSize / tiles);
+  const tileH = Math.ceil(outSize / tiles);
+  const totalTiles = tiles * tiles;
+  const gl = renderer.getContext();
+  const pixel = new Uint8Array(4);
 
-    // ガイド枠と一致するようにスケール補正しつつ4Kサイズに変更
+  if (isHQ) {
+    // 【1. テスト計算によるパラメータ自動最適化】
+    toast.textContent = 'TESTING & OPTIMIZING...';
+    await new Promise(r => setTimeout(r, 50));
+
+    // 基準となるパラメータで一度テスト用のマテリアルを作成
+    let baseRaySteps = 400;
+    let baseRayStepMin = 0.003;
+    mesh.material = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader: getFragmentShader(true, baseRaySteps, baseRayStepMin),
+      uniforms
+    });
+
     renderer.setPixelRatio(1.0);
-    renderer.setSize(outW, outH, false);
-    uniforms.u_resolution.value.set(outW, outH);
+    renderer.setSize(outSize, outSize, false);
+    uniforms.u_resolution.value.set(outSize, outSize);
+    renderer.autoClear = false;
+    renderer.clear();
+    renderer.setViewport(0, 0, outSize, outSize);
+    renderer.setScissorTest(true); 
 
+    // 画面中央付近のタイル1枚分だけをレンダリングして時間を計測
+    const testX = Math.floor(tiles / 2);
+    const testY = Math.floor(tiles / 2);
+    renderer.setScissor(testX * tileW, (tiles - 1 - testY) * tileH, tileW, tileH);
+    
+    const t0 = performance.now();
     renderer.render(scene, camera);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel); // 同期
+    const t1 = performance.now();
 
+    const testTimeMs = t1 - t0;
+    const estTotalTimeMs = testTimeMs * totalTiles;
+    const targetTimeMs = state.targetTime * 60 * 1000;
+    
+    // 目標時間(Target)と推定時間(estTotalTime)の比率。余裕がある(ratio>1)なら更に重くして画質を上げる
+    const ratio = targetTimeMs / Math.max(estTotalTimeMs, 10.0);
+    
+    // レイの計算量はステップ数に比例、ステップ長に反比例すると仮定し、平方根でバランス良く分散適用
+    let optRaySteps = baseRaySteps * Math.sqrt(ratio);
+    let optRayStepMin = baseRayStepMin / Math.sqrt(ratio);
+
+    // 現実的なハードリミット（フリーズ回避）
+    optRaySteps = Math.min(3000, Math.max(150, optRaySteps));
+    optRayStepMin = Math.max(0.00005, Math.min(0.015, optRayStepMin));
+
+    // 自動計算された「指定時間を使い切る極限のパラメータ」で再コンパイル
+    mesh.material = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader: getFragmentShader(true, optRaySteps, optRayStepMin),
+      uniforms
+    });
+
+    toast.textContent = `RENDERING 8K (Target: ${state.targetTime}m) 0%`;
+  }
+
+  renderer.setPixelRatio(1.0);
+  renderer.setSize(outSize, outSize, false);
+  uniforms.u_resolution.value.set(outSize, outSize);
+  
+  renderer.autoClear = false;
+  renderer.clear();
+  
+  // 【重要】ビューポート（座標の基準）は常に全体サイズに設定し、シザー（ハサミ）で物理的に書き込むピクセルだけを制限する
+  renderer.setViewport(0, 0, outSize, outSize);
+  renderer.setScissorTest(true); 
+
+  let completed = 0;
+  const totalTiles = tiles * tiles;
+  const gl = renderer.getContext();
+  const pixel = new Uint8Array(4);
+
+  for (let y = 0; y < tiles; y++) {
+    for (let x = 0; x < tiles; x++) {
+      if (state.cancelRender) break; // 中断フラグを監視
+
+      // タイル部分だけを切り抜いてレンダリング (左下原点に注意)
+      renderer.setScissor(x * tileW, (tiles - 1 - y) * tileH, tileW, tileH);
+      renderer.render(scene, camera);
+      
+      // ★超重要：GPUの描画完了を強制的に同期させて待つ（これがないとGPUキューが詰まってフリーズ/デッドロックする）
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      
+      completed++;
+      const percent = Math.floor((completed / totalTiles) * 100);
+      toast.textContent = isHQ ? `RENDERING 8K: ${percent}% (クリックで中断)` : `RENDERING 4K: ${percent}% (クリックで中断)`;
+      
+      // プログレス表示の更新とクリック(中断)の検知を行うためのウェイト
+      await new Promise(r => setTimeout(r, 15));
+    }
+    if (state.cancelRender) break;
+  }
+
+  // 後処理：設定を元に戻す
+  renderer.setScissorTest(false);
+  renderer.autoClear = true;
+  mesh.material = originalMaterial;
+
+  // キャンセルされていなければ画像をダウンロード
+  if (!state.cancelRender) {
     const link = document.createElement('a');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    link.download = `cosmic-raymarching_${timestamp}.png`;
+    link.download = isHQ ? `cosmic-rm_8K_HQ_${timestamp}.png` : `cosmic-rm_4K_${timestamp}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
+  }
 
-    // 元の画面サイズに戻す
-    toast.textContent = 'CALCULATING MUOGRAPHY...';
-    toast.classList.remove('visible');
-    updateSize();
-  }, 50);
+  state.isRendering = false;
+  toast.textContent = state.cancelRender ? 'CANCELLED' : 'COMPLETED';
+  setTimeout(() => { 
+    toast.classList.remove('visible'); 
+    updateSize(); 
+  }, 1200);
 });
 
 // 初期描画
