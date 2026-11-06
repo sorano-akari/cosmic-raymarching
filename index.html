@@ -442,18 +442,21 @@ function getFragmentShader(isLimitBreak, optRaySteps = 400, optRayStepMin = 0.00
     return a + b * cos(6.283185 * (vec3(1.0, 1.0, 1.0) * t + d));
   }
 
-  // 現在のパレットの3色グラデーションに沿って反復周期カラーを生成する関数
+  // 密度・反復の範囲に下限・上限を設け、パレット全体（cStart -> cMid -> cEnd）に割り当てる関数
+  // 範囲外のアンダーフロー/オーバーフローは両端の色にクランプする
   vec3 evalPalette(float t, vec3 cStart, vec3 cMid, vec3 cEnd, float isFullRainbow) {
     if (isFullRainbow > 0.5) {
       return cosinePalette(t, vec3(0.52), vec3(0.48), vec3(0.0, 0.33, 0.67));
     }
-    // 0.0 -> 1.0 -> 0.0 の三角波でパレット内の3色を滑らかに往復・循環させる
-    float w = 1.0 - abs(fract(t) * 2.0 - 1.0);
-    w = smoothstep(0.0, 1.0, w);
-    if (w < 0.5) {
-      return mix(cStart, cMid, w * 2.0);
+    // TODO: 必要に応じて下限(minLimit)・上限(maxLimit)を調整可能
+    float minLimit = 0.0;
+    float maxLimit = 1.0;
+    float tc = clamp((t - minLimit) / max(0.0001, maxLimit - minLimit), 0.0, 1.0);
+    
+    if (tc < 0.5) {
+      return mix(cStart, cMid, tc * 2.0);
     } else {
-      return mix(cMid, cEnd, (w - 0.5) * 2.0);
+      return mix(cMid, cEnd, (tc - 0.5) * 2.0);
     }
   }
 
@@ -746,6 +749,10 @@ let renderTimer = null;
 // --- 隠しコマンド受付（"U" -> "P"） ---
 let keyBuffer = '';
 window.addEventListener('keydown', (e) => {
+  // スライダーや入力欄を操作している時は誤爆するので無視する
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return;
+  if (state.isRendering) return;
+
   keyBuffer += e.key.toUpperCase();
   if (keyBuffer.length > 2) keyBuffer = keyBuffer.slice(-2);
   
@@ -753,16 +760,16 @@ window.addEventListener('keydown', (e) => {
     state.isLimitBreak = !state.isLimitBreak; // トグル切り替え
     keyBuffer = '';
     
-    // シェーダーを再生成してコンパイル
-    currentMaterial.fragmentShader = getFragmentShader(state.isLimitBreak);
-    currentMaterial.needsUpdate = true;
+    // スライダー群の一番下の目標時間設定パネルの表示/非表示を切り替え
+    const tgtGroup = document.getElementById('group-targettime');
+    if (tgtGroup) tgtGroup.style.display = state.isLimitBreak ? 'flex' : 'none';
     
     if (state.isLimitBreak) {
-      showWarningToast('🔥 LIMIT BREAK MODE: 描画精度 リミッター解除 🔥');
+      showWarningToast('🔥 LIMIT BREAK MODE: 8K & 目標時間レンダリング 準備完了 🔥');
     } else {
       showWarningToast('LIMIT BREAK MODE: OFF (通常動作に戻りました)');
     }
-    requestRender(false);
+    // プレビュー側は重すぎてフリーズするため再コンパイルせず、保存時のみ発動するようにする
   }
 });
 let hiResTimer = null;
@@ -1182,7 +1189,7 @@ canvas.addEventListener('touchmove', (e) => {
     lastY = e.touches[0].clientY;
 
     state.rotX -= dx * 0.007;
-    state.rotY = Math.max(-1.5, Math.min(1.5, state.rotY - dy * 0.007));
+    state.rotY -= dy * 0.007; // 上下制限を撤廃し、どこまでも回転可能に
     requestRender(true);
   } else if (e.touches.length === 2) {
     const cx = (e.touches[0].clientX + e.touches[1].clientX) * 0.5;
@@ -1265,7 +1272,7 @@ window.addEventListener('mousemove', (e) => {
     return;
   } else if (dragMode === 'orbit') {
     state.rotX -= dx * 0.006;
-    state.rotY = Math.max(-1.5, Math.min(1.5, state.rotY - dy * 0.006));
+    state.rotY -= dy * 0.006; // 上下制限を撤廃し、どこまでも回転可能に
   } else {
     const rect = canvas.getBoundingClientRect();
     state.pan.x += (dx * 2.0 / rect.width) / state.zoom;
@@ -1387,9 +1394,6 @@ document.getElementById('btn-save').addEventListener('click', async () => {
   renderer.setScissorTest(true); 
 
   let completed = 0;
-  const totalTiles = tiles * tiles;
-  const gl = renderer.getContext();
-  const pixel = new Uint8Array(4);
 
   for (let y = 0; y < tiles; y++) {
     for (let x = 0; x < tiles; x++) {
